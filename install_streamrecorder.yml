@@ -1,0 +1,89 @@
+# To run use command: ansible-playbook install_streamrecorder.yml --ask-pass --ask-become-pass
+# To add or remove remote systems, edit /etc/ansible/hosts
+# Make sure the remote system has a set of ssh keys
+# Make sure passwordless sudo for username has already been set-up when you run this
+---
+- hosts: all
+  remote_user: username
+  become_user: root
+  become_method: sudo
+  tasks:
+    - import_tasks: usernamePasswdlessSudo.yaml
+
+    - name: install apt-get packages
+      become: yes
+      apt:
+        name: libpam-systemd,dbus,sudo,vim,aptitude,htop,nmap,screen,ssh,pv,gcp,bash-completion,parted,nfs-common,cifs-utils,ntfs-3g,exfat-fuse,exfat-utils,git,python3-dev,python-pip,python3,python3-pip,autoconf,automake,build-essential,libass-dev,libfreetype6-dev,libsdl1.2-dev,libtheora-dev,libtool,libva-dev,libvdpau-dev,libvorbis-dev,libxcb1-dev,libxcb-shm0-dev,libxcb-xfixes0-dev,pkg-config,texinfo,zlib1g-dev,libxvidcore4,libxvidcore-dev,yasm,libx264-dev,unzip,nasm,libmp3lame-dev,libopus-dev
+        update_cache: yes
+
+    - name: copy private ssh key
+      copy:
+        src: streamrecorder_id_rsa
+        dest: /home/username/.ssh/id_rsa
+        owner: username
+        group: username
+        mode: 0600
+
+    - name: copy public ssh key
+      copy:
+        src: streamrecorder_id_rsa.pub
+        dest: /home/username/.ssh/id_rsa.pub
+        owner: username
+        group: username
+        mode: 0644
+
+    - name: pull streamrecorder from github
+      git:
+        accept_hostkey: yes
+        repo: git@github.umn.edu:MTO/streamrecorder.git
+        dest: /home/username/streamrecorder
+        force: yes
+  
+    - name: pip install requirements
+      pip:
+        requirements: /home/username/streamrecorder/requirements.txt
+        executable: pip3
+
+    - name: build ffmpeg
+      shell: /home/username/streamrecorder/build_ffmpeg.sh -n
+      args:
+        chdir: /home/username
+
+    - name: clone onvif
+      git:
+        repo: https://github.com/FalkTannhaeuser/python-onvif-zeep.git
+        dest: /home/username/onvif
+
+    - name: setup onvif
+      pip:
+        name: onvif_zeep
+        executable: pip3
+
+    - name: copy systemd service file
+      become: yes
+      copy:
+        src: ~/streamrecorder/streamrecorder.service
+        dest: /etc/systemd/system
+        owner: root
+        group: root
+        mode: 0440
+
+    - name: setting up streamrecorder systemd
+      become: yes
+      systemd:
+        name: streamrecorder
+        daemon_reload: yes
+        enabled: yes
+        state: restarted
+
+    - name: Restart server
+      become: yes
+      shell: sleep 2 && /sbin/shutdown -r now "Ansible system package upgraded"
+      async: 1
+      poll: 0
+      changed_when: False
+
+    - name: waiting 30 secs for server to come back
+      local_action: wait_for host={{ ansible_default_ipv4.address }} port=22 state=started delay=30 timeout=60
+      become: false
+...

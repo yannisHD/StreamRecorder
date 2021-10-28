@@ -1,0 +1,14 @@
+- name: create 010_username-nopasswd file
+  become: yes
+  file:
+    path: /etc/sudoers.d/010_username-nopasswd
+    owner: root
+    group: root
+    mode: 0440
+    state: touch
+
+- name: add username as passwdless sudo
+  become: yes
+  lineinfile:
+    path: /etc/sudoers.d/010_username-nopasswd
+    line: 'username ALL=(ALL) NOPASSWD: ALL'

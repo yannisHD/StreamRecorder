@@ -1,0 +1,14 @@
+#!/bin/sh
+
+# Place this script in /etc/update-motd.d to print streamrecorder status info at each SSH login
+
+echo "\nWelcome to $(cat /etc/hostname)!\n"
+
+sudo -u username /home/username/streamrecorder/dvr-config.py -p
+
+echo "\nVideo storage space usage:"
+df -h /mnt/video
+
+echo "\nDisk usage by stream:"
+du -d 1 -h /mnt/video/
+

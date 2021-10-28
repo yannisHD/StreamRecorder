@@ -1,0 +1,11 @@
+[Unit]
+Description=Custom systemd script to run streamrecorder
+# Add picam-rtsp.service if recording from local Pi camera module
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/sudo -u username /home/username/streamrecorder/streamrecorder-wrapper.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

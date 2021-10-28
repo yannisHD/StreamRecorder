@@ -1,0 +1,10 @@
+split
+screen python streamrecorder.py -l DEBUG
+focus bottom
+screen
+
+bind j focus down
+bind k focus up
+bind t focus top
+bind b focus bottom
+
