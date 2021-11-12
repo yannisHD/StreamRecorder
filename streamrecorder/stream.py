@@ -522,7 +522,8 @@ class CameraRecorder(ProcessManager):
     def __init__(self, dvrName, streamName, streamURL, videoContainer, codec, quality, framerate,
                  recordingSchedule, videoLocation, ffmpegLogLevel='warning', ffmpegLogFileForm='ffmpeg.log',
                  logLocation='../logs/', logLevel='INFO', initTime=15, endAtDuration=False,
-                 performRestarts=False, user=None, passwd=None, manufacturer=None, ipAddr=None, port=None, onvifDir=None):
+                 performRestarts=False, user=None, passwd=None, manufacturer=None, ipAddr=None, port=None,
+                 onvifDir=None, streamType=None):
         self.lastReboot = time.strftime('%Y%m%d') # These need to be set before super is called, so should_record can get called in PM ctor
         self.isRestarting = False
         self.continueRecordingPast = 0
@@ -543,19 +544,56 @@ class CameraRecorder(ProcessManager):
         self.ip = ipAddr
         self.port = port
         self.onvifDir = onvifDir
+        self.streamType = streamType
         if self.manufacturer != None and self.manufacturer.lower() != 'axis' and self.performRestarts:
             self.set_camera_time()
-
+    
+    def getStreamType(self):
+        """Get the stream type, i.e. RTSP, HLS, DASH, or MJPEG. Result is
+        saved in the streamType attribute.
+        """
+        if self.streamType is not None:
+            self.logger.debug("Forcing streaming protocol: '{}' ...".format(
+                self.streamType))
+        else:
+            url = self.streamURL.lower()
+            if url.startswith('rtsp://'):
+                self.streamType = 'RTSP'
+            elif url.startswith('http://'):
+                # NOTE this is probably OK for HLS/DASH/MJPEG differentiation,
+                # though there may be better approaches...
+                if url.endswith('.m3u8') or url.endswith('.m3u'):
+                    self.streamType = 'HLS'
+                elif url.endswith('.mpd'):
+                    self.streamType = 'DASH'
+                else:
+                    # if HTTP and no other information, assume (and force) MJPEG
+                    self.streamType = 'MJPEG'
+            self.logger.debug("Streaming protocol: '{}' ...".format(
+                self.streamType))
+        
+        # up the killAtErrorCount if we're recording HLS or DASH - we need to
+        # allow for longer periods of 0 growth since it sends little clips
+        # TODO this may not be sufficient if clips are really long (should be
+        # pretty rare in our applications, but who knows...)
+        if self.streamType in ['HLS', 'DASH']:
+            self.killAtErrorCount = 20
+            self.logger.debug("Upping killAtErrorCount to {} ...".format(
+                self.killAtErrorCount))
+    
     def build_command(self, videoDuration):
         self.logger.debug("Building ffmpeg command string...")
+        self.getStreamType()
         cmd_args = []
-        if 'rtsp' in self.streamURL:
-            self.logger.debug("Using RTSP as streaming protocol...")
+        if self.streamType == 'RTSP':
             cmd_args = ['ffmpeg', '-y', '-use_wallclock_as_timestamps', '1', '-loglevel', self.ffmpegLogLevel,
                              '-rtsp_transport', 'tcp', '-stimeout', '5000000', '-i', self.streamURL, '-c:v', self.codec,
                              '-r', str(self.framerate), '-t', str(videoDuration), self.currentFile]
-        elif 'http' in self.streamURL:
-            self.logger.debug("Using MJPEG as streaming protocol...")
+        elif self.streamType in ['HLS', 'DASH']:
+            # NOTE that we don't set a framerate for HLS/DASH
+            cmd_args = ['ffmpeg', '-y', '-loglevel', self.ffmpegLogLevel, '-i', self.streamURL,
+                        '-c', self.codec, '-t', str(videoDuration), self.currentFile]
+        elif self.streamType == 'MJPEG':
             cmd_args = ['ffmpeg', '-y', '-use_wallclock_as_timestamps', '1', '-loglevel', self.ffmpegLogLevel,
                              '-f', 'mjpeg', '-i', self.streamURL, '-c:v', self.codec, '-qscale:v', str(self.quality),
                              '-r', str(self.framerate), '-t', str(videoDuration), self.currentFile]
