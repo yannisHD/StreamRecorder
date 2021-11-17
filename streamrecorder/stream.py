@@ -448,7 +448,11 @@ class ProcessManager(object):
             self.reset()
         with open(self.processLogName, 'a') as f:
             f.write('### END PROCESS LOG FOR PROCESS {} ###\n\n'.format(self.currentFile if self.createFilename else 'Unknown'))
-
+    
+    def get_recording_duration(self):
+        """Get the amount of time to record given the current time."""
+        return self.recordingSchedule.get_recording_duration()
+    
     def record(self):
         # reset the recording parameters
         self.logger.debug("Entered record...")
@@ -461,7 +465,7 @@ class ProcessManager(object):
             self.isRecording = True
             self.startTime = time.time()
             # calculate recording time
-            duration = self.recordingSchedule.get_recording_duration()
+            duration = self.get_recording_duration()
             self.logger.debug("Stream will record for {} seconds!".format(duration))
 
             if self.createFilename:
@@ -547,6 +551,7 @@ class CameraRecorder(ProcessManager):
         self.streamType = streamType
         if self.manufacturer != None and self.manufacturer.lower() != 'axis' and self.performRestarts:
             self.set_camera_time()
+        self.getStreamType()
     
     def getStreamType(self):
         """Get the stream type, i.e. RTSP, HLS, DASH, or MJPEG. Result is
@@ -576,20 +581,41 @@ class CameraRecorder(ProcessManager):
         # allow for longer periods of 0 growth since it sends little clips
         # TODO this may not be sufficient if clips are really long (should be
         # pretty rare in our applications, but who knows...)
-        if self.streamType in ['HLS', 'DASH']:
+        if self.isHlsDash():
             self.killAtErrorCount = 20
             self.logger.debug("Upping killAtErrorCount to {} ...".format(
                 self.killAtErrorCount))
     
+    def isHlsDash(self):
+        """Return if the stream is HLS/DASH."""
+        return self.streamType in ['HLS', 'DASH']
+    
+    def get_recording_duration(self):
+        """Get the amount of time to record given the current time. Runs some
+        additional checks on HLS/DASH recordings to try and prevent small
+        clips at the ends of recording intervals.
+        """
+        # get the "standard" duration
+        dur = self.recordingSchedule.get_recording_duration()
+        
+        # if HLS/DASH, check if the clip will be too short (defined as less
+        # than 60 seconds, as long as clips are not 1-minute clips)
+        if self.isHlsDash() and dur < 60 and self.recordingSchedule.fileDurationMinutes != 1:
+            self.logger.info("Clip duration {} too short! Merging with next clip!".format(dur))
+            extraDur = dur + 1
+            atTime = time.time() + extraDur
+            dur2 = self.recordingSchedule.get_recording_duration(atTime=atTime)
+            return dur2 + extraDur
+        return dur
+    
     def build_command(self, videoDuration):
         self.logger.debug("Building ffmpeg command string...")
-        self.getStreamType()
         cmd_args = []
         if self.streamType == 'RTSP':
             cmd_args = ['ffmpeg', '-y', '-use_wallclock_as_timestamps', '1', '-loglevel', self.ffmpegLogLevel,
                              '-rtsp_transport', 'tcp', '-stimeout', '5000000', '-i', self.streamURL, '-c:v', self.codec,
                              '-r', str(self.framerate), '-t', str(videoDuration), self.currentFile]
-        elif self.streamType in ['HLS', 'DASH']:
+        elif self.isHlsDash():
             # NOTE that we don't set a framerate for HLS/DASH
             cmd_args = ['ffmpeg', '-y', '-loglevel', self.ffmpegLogLevel, '-i', self.streamURL,
                         '-c', self.codec, '-t', str(videoDuration), self.currentFile]
